@@ -100,7 +100,7 @@ class ElasticSearchUtility(DefaultSearchUtility):
             query = {}
 
         q = {
-            'index': self.get_index_name(site)
+        #    'index': self.get_index_name(site)
         }
 
         if doc_type is not None:
