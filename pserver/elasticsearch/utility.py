@@ -5,20 +5,20 @@ from aioes.exception import RequestError
 from aioes.exception import TransportError
 from plone.server import app_settings
 from plone.server.catalog.catalog import DefaultSearchUtility
-from plone.server.interfaces import ICatalogDataAdapter
+from plone.server.events import notify
 from plone.server.interfaces import IAbsoluteURL
+from plone.server.interfaces import ICatalogDataAdapter
 from plone.server.interfaces import IResource
+from plone.server.metaconfigure import rec_merge
 from plone.server.transactions import get_current_request
 from plone.server.traversal import do_traverse
-from pserver.elasticsearch.schema import get_mappings
-from plone.server.metaconfigure import rec_merge
-from plone.server.events import notify
 from pserver.elasticsearch.events import SearchDoneEvent
+from pserver.elasticsearch.schema import get_mappings
 
-import logging
-import asyncio
 import aiohttp
+import asyncio
 import json
+import logging
 
 
 logger = logging.getLogger('pserver.elasticsearch')
@@ -103,24 +103,9 @@ class ElasticSearchUtility(DefaultSearchUtility):
         """
         pass
 
-    async def query(self, site, query, doc_type=None, size=10):
-        """
-        transform into query...
-        right now, it's just passing through into elasticsearch
-        """
-        if query is None:
-            query = {}
-
-        q = {
-            'index': self.get_index_name(site)
-        }
-
-        if doc_type is not None:
-            q['doc_type'] = doc_type
-
+    def get_permission_query(self, request):
         users = []
         roles = []
-        request = get_current_request()
         for user in request.security.participations:
             users.append(user.principal.id)
             roles.extend([key for key, value in user.principal._roles.items()
@@ -145,7 +130,7 @@ class ElasticSearchUtility(DefaultSearchUtility):
         mustnot_list = [{'match': {'denyed_roles': x}} for x in roles]
         mustnot_list.extend([{'match': {'denyed_users': x}} for x in users])
 
-        permission_query = {
+        return {
             'query': {
                 'bool': {
                     'minimum_number_should_match': 1,
@@ -154,6 +139,25 @@ class ElasticSearchUtility(DefaultSearchUtility):
                 }
             }
         }
+
+    async def query(self, site, query, doc_type=None, size=10):
+        """
+        transform into query...
+        right now, it's just passing through into elasticsearch
+        """
+        if query is None:
+            query = {}
+
+        q = {
+            'index': self.get_index_name(site)
+        }
+
+        if doc_type is not None:
+            q['doc_type'] = doc_type
+
+        request = get_current_request()
+        permission_query = self.get_permission_query(request)
+
         query = rec_merge(query, permission_query)
         # query.update(permission_query)
         q['body'] = query
@@ -178,7 +182,7 @@ class ElasticSearchUtility(DefaultSearchUtility):
         if 'suggest' in result:
             final['suggest'] = result['suggest']
         await notify(SearchDoneEvent(
-            users, query, result['hits']['total'], request))
+            permission_query, query, result['hits']['total'], request))
         return final
 
     async def get_by_uuid(self, site, uuid):
@@ -224,13 +228,11 @@ class ElasticSearchUtility(DefaultSearchUtility):
     async def get_folder_contents(self, site, parent_uuid, doc_type=None):
         query = {
             'query': {
-                'filtered': {
-                    'filter': {
-                        'term': {
-                            'parent_uuid': parent_uuid
-                        }
+                'bool': {
+                    'must': {
+                        'term': {'parent_uuid': parent_uuid}
                     },
-                    'query': {
+                    'should': {
                         'match_all': {}
                     }
                 }
@@ -243,8 +245,6 @@ class ElasticSearchUtility(DefaultSearchUtility):
         try:
             print("Indexing %d" % len(idents))
             print(" Size %d" % len(json.dumps(bulk_data)))
-            if len(json.dumps(bulk_data)) > 1000000:
-                import pdb; pdb.set_trace()
             result = await self.conn.bulk(
                 index=index_name, doc_type=None,
                 body=bulk_data)
@@ -401,7 +401,7 @@ class ElasticSearchUtility(DefaultSearchUtility):
                 ) as resp:
             pass
         logger.warn('Reindexed')
-        
+
         # Move aliases
         body = {
             "actions": [

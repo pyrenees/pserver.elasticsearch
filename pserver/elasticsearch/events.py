@@ -17,8 +17,8 @@ class ISearchDoneEvent(Interface):
 class SearchDoneEvent(object):
     """An object is going to be assigned to an attribute on another object."""
 
-    def __init__(self, users, query, total, request):
-        self.users = users
+    def __init__(self, permissions, query, total, request):
+        self.permissions = permissions
         self.query = query
         self.total = total
         self.request = request
