@@ -111,11 +111,11 @@ class ElasticSearchUtility(ElasticSearchManager):
         await asyncio.gather(*tasks)
 
     async def reindex_all_content(
-            self, obj, security=False, loop=None, response=None):
+            self, obj, security=False, loop=None, response=None, clean=True):
         """ We can reindex content or security for an object or
         a specific query
         """
-        if security is False:
+        if security is False and clean is True:
             await self.unindex_all_childs(obj, response=None, future=False)
         # count_objects = await self.count_operation(obj)
         loads = {}
