@@ -43,7 +43,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             self, obj, site, loads, security=False, response=None):
         global REINDEX_LOCK
         serialization = None
-        while len(loads) > 300:
+        while len(loads) > 150:
             if response is not None:
                 response.write(b'Buffer too big waiting\n')
             await asyncio.sleep(10)
