@@ -487,7 +487,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 result = await self.bulk_insert(
                     real_index_name, bulk_data, idents, response=response)
             if 'errors' in result and result['errors']:
-                logger.error(json.dumps(result['items']))
+                logger.error(json.dumps(result))
             return result
 
     async def update(self, site, datas):
