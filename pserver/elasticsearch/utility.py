@@ -26,7 +26,6 @@ import resource
 
 
 logger = logging.getLogger('pserver.elasticsearch')
-logger_reindex = logging.getLogger('elasticsearch_reindex')
 
 MAX_RETRIES_ON_REINDEX = 5
 REINDEX_LOCK = False
@@ -36,23 +35,24 @@ class ElasticSearchUtility(ElasticSearchManager):
 
     bulk_size = 50
 
-    async def reindex_bunk(self, site, bunk, update=False):
+    async def reindex_bunk(self, site, bunk, update=False, response=None):
         if update:
             await self.update(site, bunk)
         else:
-            await self.index(site, bunk)
+            await self.index(site, bunk, response=response)
 
     async def add_object(
-            self, obj, site, loads, security=False):
+            self, obj, site, loads, security=False, response=None):
         global REINDEX_LOCK
         serialization = None
         while len(loads) > 150:
-            logger_reindex.info('Buffer too big waiting')
+            if response is not None:
+                response.write(b'Buffer too big waiting\n')
             await asyncio.sleep(100)
-        if hasattr(obj, 'id'):
-            logger_reindex.info(
-                'Object %s Security %r Buffer %d' %
-                (obj.id, security, len(loads)))
+        if response is not None and hasattr(obj, 'id'):
+            response.write(
+                b'Object %s Security %r Buffer %d\n' %
+                (obj.id.encode('utf-8'), security, len(loads)))
         try:
             if security:
                 serialization = ISecurityInfo(obj)()
@@ -64,16 +64,19 @@ class ElasticSearchUtility(ElasticSearchManager):
 
         if len(loads) >= self.bulk_size and REINDEX_LOCK is False:
             REINDEX_LOCK = True
-            logger_reindex.info('Going to reindex')
+            if response is not None:
+                response.write(b'Going to reindex\n')
             to_index = loads.copy()
             await self.reindex_bunk(
-                site, to_index, update=security)
-            logger_reindex.info('Indexed %d' % len(loads))
+                site, to_index, update=security, response=response)
+            if response is not None:
+                response.write(b'Indexed %d\n' % len(loads))
             for key in to_index.keys():
                 del loads[key]
             to_index = None
             gc.collect()
-            logger_reindex.info('Using memory : %d' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+            if response is not None:
+                response.write(b'Using memory : %d\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
             REINDEX_LOCK = False
 
     async def walk_brothers(self, bucket, loop, executor):
@@ -82,7 +85,7 @@ class ElasticSearchUtility(ElasticSearchManager):
 
     async def reindex_recursive(
             self, obj, site, loads, security=False, loop=None,
-            executor=None):
+            executor=None, response=None):
         if not hasattr(obj, '_Folder__data'):
             return
         folder = obj._Folder__data
@@ -97,7 +100,8 @@ class ElasticSearchUtility(ElasticSearchManager):
                     obj=item,
                     site=site,
                     loads=loads,
-                    security=security)
+                    security=security,
+                    response=response)
                 await asyncio.sleep(0)
                 if IContainer.providedBy(item) and len(item):
                     tasks.append(self.reindex_recursive(
@@ -106,18 +110,19 @@ class ElasticSearchUtility(ElasticSearchManager):
                         loads=loads,
                         security=security,
                         loop=loop,
-                        executor=executor))
+                        executor=executor,
+                        response=response))
             bucket = bucket._next
 
         await asyncio.gather(*tasks)
 
     async def reindex_all_content(
-            self, obj, security=False, loop=None, clean=True):
+            self, obj, security=False, loop=None, response=None, clean=True):
         """ We can reindex content or security for an object or
         a specific query
         """
         if security is False and clean is True:
-            await self.unindex_all_childs(obj, future=False)
+            await self.unindex_all_childs(obj, response=None, future=False)
         # count_objects = await self.count_operation(obj)
         loads = {}
         if loop is None:
@@ -129,16 +134,18 @@ class ElasticSearchUtility(ElasticSearchManager):
             obj=obj,
             site=site,
             loads=loads,
-            security=security)
+            security=security,
+            response=response)
         await self.reindex_recursive(
             obj=obj,
             site=site,
             loads=loads,
             security=security,
             loop=loop,
-            executor=executor)
+            executor=executor,
+            response=response)
         if len(loads):
-            await self.reindex_bunk(site, loads, security)
+            await self.reindex_bunk(site, loads, security, response=response)
 
     async def search(self, site, query):
         """
@@ -354,7 +361,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             else:
                 logger.warn('Wrong deletion of childs' + json.dumps(result))
 
-    async def unindex_all_childs(self, resource, future=True):
+    async def unindex_all_childs(self, resource, response=None, future=True):
         if type(resource) is str:
             path = resource
             depth = path.count('/') + 1
@@ -362,7 +369,8 @@ class ElasticSearchUtility(ElasticSearchManager):
             path = get_content_path(resource)
             depth = get_content_depth(resource)
             depth += 1
-        logger_reindex.info('Removing all childs of %s' % path)
+        if response is not None:
+            response.write(b'Removing all childs of %s' % path.encode('utf-8'))
         request = get_current_request()
         index_name = self.get_index_name(request.site)
         path_query = {
@@ -389,6 +397,7 @@ class ElasticSearchUtility(ElasticSearchManager):
         else:
             await self.call_unindex_all_childs(index_name, path_query)
 
+
     async def get_folder_contents(self, site, parent_uuid, doc_type=None):
         query = {
             'query': {
@@ -407,26 +416,39 @@ class ElasticSearchUtility(ElasticSearchManager):
         return await self.query(site, query, doc_type)
 
     async def bulk_insert(
-            self, index_name, bulk_data, idents, count=0):
+            self, index_name, bulk_data, idents, count=0, response=None):
         result = {}
         try:
-            logger_reindex.info(
-                'Indexing %d Size %d' %
-                (len(idents), len(json.dumps(bulk_data)))
-            )
+            if response is not None:
+                response.write(
+                    b'Indexing %d Size %d\n' %
+                    (len(idents), len(json.dumps(bulk_data)))
+                )
             result = await self.conn.bulk(
                 index=index_name, doc_type=None,
                 body=bulk_data)
+            if response is not None:
+                response.write(b'Indexed \n')
         except aiohttp.errors.ClientResponseError as e:
             count += 1
             if count > MAX_RETRIES_ON_REINDEX:
-                logger_reindex.error('Could not index ' + ' '.join(idents) + ' ' + str(e))
+                if response is not None:
+                    response.write(
+                        b'Could not index %s\n' %
+                        str(e).encode('utf-8')
+                    )
+                logger.error('Could not index ' + ' '.join(idents) + ' ' + str(e))
             else:
                 await asyncio.sleep(1.0)
                 result = await self.bulk_insert(index_name, bulk_data, idents, count)
         except aiohttp.errors.ClientOSError as e:
             count += 1
             if count > MAX_RETRIES_ON_REINDEX:
+                if response is not None:
+                    response.write(
+                        b'Could not index %s\n' %
+                        str(e).encode('utf-8')
+                    )
                 logger.error('Could not index ' + ' '.join(idents) + ' ' + str(e))
             else:
                 await asyncio.sleep(1.0)
@@ -434,7 +456,7 @@ class ElasticSearchUtility(ElasticSearchManager):
 
         return result
 
-    async def index(self, site, datas):
+    async def index(self, site, datas, response=None):
         """ If there is request we get the site from there """
         if len(datas) > 0:
             bulk_data = []
@@ -454,13 +476,13 @@ class ElasticSearchUtility(ElasticSearchManager):
                 idents.append(ident)
                 if len(bulk_data) % (self.bulk_size * 2) == 0:
                     result = await self.bulk_insert(
-                        real_index_name, bulk_data, idents)
+                        real_index_name, bulk_data, idents, response=response)
                     idents = []
                     bulk_data = []
 
             if len(bulk_data) > 0:
                 result = await self.bulk_insert(
-                    real_index_name, bulk_data, idents)
+                    real_index_name, bulk_data, idents, response=response)
             if 'errors' in result and result['errors']:
                 logger.error(json.dumps(result['items']))
             return result
