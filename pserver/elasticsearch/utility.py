@@ -29,6 +29,7 @@ logger = logging.getLogger('pserver.elasticsearch')
 
 MAX_RETRIES_ON_REINDEX = 5
 REINDEX_LOCK = False
+MAX_MEMORY = 1000
 
 
 class ElasticSearchUtility(ElasticSearchManager):
@@ -45,7 +46,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             self, obj, site, loads, security=False, response=None):
         global REINDEX_LOCK
         serialization = None
-        while len(loads) > 150:
+        while len(loads) > self.bulk_size * 2:
             if response is not None:
                 response.write(b'Buffer too big waiting\n')
             await asyncio.sleep(1)
@@ -70,7 +71,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             await self.reindex_bunk(
                 site, to_index, update=security, response=response)
             if response is not None:
-                response.write(b'Indexed %d\n' % len(loads))
+                response.write(b'Indexed %d\n' % len(to_index))
             for key in to_index.keys():
                 del loads[key]
             to_index = None
@@ -78,7 +79,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             gc.collect()
             if response is not None:
                 response.write(b'GC cleaned %d\n' % num)
-                response.write(b'Memory usage         : % 2.2f MB' % round(
+                response.write(b'Memory usage         : % 2.2f MB\n' % round(
                     resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024.0/1024.0,1))
             REINDEX_LOCK = False
 
@@ -95,6 +96,7 @@ class ElasticSearchUtility(ElasticSearchManager):
         bucket = folder._firstbucket
         if not bucket:
             return
+        del obj
 
         tasks = []
         while bucket:
@@ -116,7 +118,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                         executor=executor,
                         response=response))
             bucket = bucket._next
-
+        gc.collect()
         await asyncio.gather(*tasks)
 
     async def reindex_all_content(
