@@ -21,6 +21,7 @@ import json
 import logging
 import time
 import uuid
+import gc
 
 
 logger = logging.getLogger('pserver.elasticsearch')
@@ -71,6 +72,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 response.write(b'Indexed %d\n' % len(loads))
             for key in to_index.keys():
                 del loads[key]
+            gc.collect()
             REINDEX_LOCK = False
 
     async def walk_brothers(self, bucket, loop, executor):
