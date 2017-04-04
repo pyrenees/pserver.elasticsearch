@@ -90,6 +90,7 @@ class ElasticSearchUtility(ElasticSearchManager):
     async def reindex_recursive(
             self, obj, site, loads, security=False, loop=None,
             executor=None, response=None):
+        obj = site._p_jar.get(obj)
         if not hasattr(obj, '_Folder__data'):
             return
         folder = obj._Folder__data
@@ -97,6 +98,7 @@ class ElasticSearchUtility(ElasticSearchManager):
         if not bucket:
             return
         del obj
+        gc.collect()
 
         tasks = []
         while bucket:
@@ -110,7 +112,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 await asyncio.sleep(0)
                 if IContainer.providedBy(item) and len(item):
                     tasks.append(self.reindex_recursive(
-                        obj=item,
+                        obj=item._p_oid,
                         site=site,
                         loads=loads,
                         security=security,
@@ -118,7 +120,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                         executor=executor,
                         response=response))
             bucket = bucket._next
-        gc.collect()
+        
         await asyncio.gather(*tasks)
 
     async def reindex_all_content(
@@ -142,7 +144,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             security=security,
             response=response)
         await self.reindex_recursive(
-            obj=obj,
+            obj=obj._p_oid,
             site=site,
             loads=loads,
             security=security,
@@ -391,10 +393,10 @@ class ElasticSearchUtility(ElasticSearchManager):
                 'match':
                     {'path': path}
             })
-            path_query['query']['bool']['must'].append({
-                'range':
-                    {'depth': {'gte': depth}}
-            })
+        path_query['query']['bool']['must'].append({
+            'range':
+                {'depth': {'gte': depth}}
+        })
 
         if future:
             _id = 'unindex_all_childs-' + uuid.uuid4().hex
