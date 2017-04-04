@@ -410,7 +410,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             self, index_name, bulk_data, idents, count=0):
         result = {}
         try:
-            logger_reindex(
+            logger_reindex.info(
                 'Indexing %d Size %d' %
                 (len(idents), len(json.dumps(bulk_data)))
             )
