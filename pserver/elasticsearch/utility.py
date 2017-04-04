@@ -48,7 +48,7 @@ class ElasticSearchUtility(ElasticSearchManager):
         while len(loads) > 150:
             if response is not None:
                 response.write(b'Buffer too big waiting\n')
-            await asyncio.sleep(100)
+            await asyncio.sleep(1)
         if response is not None and hasattr(obj, 'id'):
             response.write(
                 b'Object %s Security %r Buffer %d\n' %
@@ -75,6 +75,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 del loads[key]
             to_index = None
             num, _, _ = gc.get_count()
+            gc.collect()
             if response is not None:
                 response.write(b'GC cleaned %d\n' % num)
                 response.write(b'Memory usage         : % 2.2f MB' % round(
