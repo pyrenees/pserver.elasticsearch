@@ -22,6 +22,7 @@ import logging
 import time
 import uuid
 import gc
+import resource
 
 
 logger = logging.getLogger('pserver.elasticsearch')
@@ -47,7 +48,7 @@ class ElasticSearchUtility(ElasticSearchManager):
         while len(loads) > 150:
             if response is not None:
                 response.write(b'Buffer too big waiting\n')
-            await asyncio.sleep(10)
+            await asyncio.sleep(100)
         if response is not None and hasattr(obj, 'id'):
             response.write(
                 b'Object %s Security %r Buffer %d\n' %
@@ -72,7 +73,9 @@ class ElasticSearchUtility(ElasticSearchManager):
                 response.write(b'Indexed %d\n' % len(loads))
             for key in to_index.keys():
                 del loads[key]
+            to_index = None
             gc.collect()
+            response.write(b'Using memory : %d\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
             REINDEX_LOCK = False
 
     async def walk_brothers(self, bucket, loop, executor):
@@ -424,7 +427,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 index=index_name, doc_type=None,
                 body=bulk_data)
             if response is not None:
-                response.write(b'Indexed')
+                response.write(b'Indexed \n')
         except aiohttp.errors.ClientResponseError as e:
             count += 1
             if count > MAX_RETRIES_ON_REINDEX:
