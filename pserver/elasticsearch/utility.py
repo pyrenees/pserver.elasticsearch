@@ -45,11 +45,11 @@ class ElasticSearchUtility(ElasticSearchManager):
     async def add_object(
             self, obj, site, loads, security=False, response=None):
         global REINDEX_LOCK
-        serialization = None
         while len(loads) > self.bulk_size * 2:
             if response is not None:
                 response.write(b'Buffer too big waiting\n')
             await asyncio.sleep(1)
+        serialization = None
         if response is not None and hasattr(obj, 'id'):
             response.write(
                 b'Object %s Security %r Buffer %d\n' %
@@ -83,13 +83,14 @@ class ElasticSearchUtility(ElasticSearchManager):
                     resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024.0/1024.0,1))
             REINDEX_LOCK = False
 
-    async def walk_brothers(self, bucket, loop, executor):
-        for item in await loop.run_in_executor(executor, bucket.values):
+    def walk_brothers(self, bucket, loop, executor):
+        for item in bucket.values():
             yield item
 
     async def reindex_recursive(
             self, obj, site, loads, security=False, loop=None,
             executor=None, response=None):
+
         obj = site._p_jar.get(obj)
         if not hasattr(obj, '_Folder__data'):
             return
@@ -100,9 +101,8 @@ class ElasticSearchUtility(ElasticSearchManager):
         del obj
         gc.collect()
 
-        tasks = []
         while bucket:
-            async for item in self.walk_brothers(bucket, loop, executor):
+            for item in self.walk_brothers(bucket, loop, executor):
                 await self.add_object(
                     obj=item,
                     site=site,
@@ -111,18 +111,16 @@ class ElasticSearchUtility(ElasticSearchManager):
                     response=response)
                 await asyncio.sleep(0)
                 if IContainer.providedBy(item) and len(item):
-                    tasks.append(self.reindex_recursive(
+                    await self.reindex_recursive(
                         obj=item._p_oid,
                         site=site,
                         loads=loads,
                         security=security,
                         loop=loop,
                         executor=executor,
-                        response=response))
+                        response=response)
             bucket = bucket._next
         
-        await asyncio.gather(*tasks)
-
     async def reindex_all_content(
             self, obj, security=False, loop=None, response=None, clean=True):
         """ We can reindex content or security for an object or
