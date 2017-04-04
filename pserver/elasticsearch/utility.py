@@ -22,7 +22,6 @@ import logging
 import time
 import uuid
 import gc
-import resource
 
 
 logger = logging.getLogger('pserver.elasticsearch')
@@ -75,8 +74,6 @@ class ElasticSearchUtility(ElasticSearchManager):
                 del loads[key]
             to_index = None
             gc.collect()
-            if response is not None:
-                response.write(b'Using memory : %d\n' % resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
             REINDEX_LOCK = False
 
     async def walk_brothers(self, bucket, loop, executor):
