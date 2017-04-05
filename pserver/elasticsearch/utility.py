@@ -39,8 +39,8 @@ class ElasticSearchUtility(ElasticSearchManager):
     async def reindex_bunk(self, site, bunk, update=False, response=None):
         if update:
             await self.update(site, bunk)
-        # else:
-        #     await self.index(site, bunk, response=response)
+        else:
+            await self.index(site, bunk, response=response)
 
     async def add_object(
             self, obj, site, loads, security=False, response=None):
@@ -69,6 +69,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             loads.clear()
             num, _, _ = gc.get_count()
             gc.collect()
+            site._p_jar.invalidateCache()
             if response is not None:
                 response.write(b'GC cleaned %d\n' % num)
                 response.write(b'Memory usage         : % 2.2f MB\n' % round(
