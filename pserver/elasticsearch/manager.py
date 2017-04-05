@@ -213,7 +213,26 @@ class ElasticSearchManager(DefaultSearchUtility):
         await self.conn.indices.open(real_index_name_next_version)
 
         # Start to duplicate aliases
-        await self.conn.indices.put_alias(index_name, temp_index)
+        body = {
+            "actions": [
+                {"remove": {
+                    "alias": index_name,
+                    "index": real_index_name
+                }},
+                {"add": {
+                    "alias": index_name,
+                    "index": temp_index
+                }}
+            ]
+        }
+        conn_es = await self.conn.transport.get_connection()
+        async with conn_es._session.post(
+                    conn_es._base_url + '_aliases',
+                    data=json.dumps(body),
+                    timeout=1000000
+                ) as resp:
+            pass
+        logger.warn('Updated aliases')
 
         # Reindex
         body = {
@@ -237,7 +256,7 @@ class ElasticSearchManager(DefaultSearchUtility):
             "actions": [
                 {"remove": {
                     "alias": index_name,
-                    "index": real_index_name
+                    "index": temp_index
                 }},
                 {"add": {
                     "alias": index_name,
