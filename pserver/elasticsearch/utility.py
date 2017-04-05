@@ -40,7 +40,7 @@ class ElasticSearchUtility(ElasticSearchManager):
         if update:
             await self.update(site, bunk)
         else:
-            await self.index(site, bunk, response=response)
+            # await self.index(site, bunk, response=response)
 
     async def add_object(
             self, obj, site, loads, security=False, response=None):
