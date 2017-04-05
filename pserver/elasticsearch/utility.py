@@ -69,7 +69,6 @@ class ElasticSearchUtility(ElasticSearchManager):
             loads.clear()
             num, _, _ = gc.get_count()
             gc.collect()
-            site._p_jar.invalidateCache()
             if response is not None:
                 response.write(b'GC cleaned %d\n' % num)
                 response.write(b'Memory usage         : % 2.2f MB\n' % round(
@@ -93,6 +92,8 @@ class ElasticSearchUtility(ElasticSearchManager):
                     loads=loads,
                     security=security,
                     response=response)
+
+        site._p_jar._cache.invalidate(obj._p_oid)
         del obj
         
     async def reindex_all_content(
