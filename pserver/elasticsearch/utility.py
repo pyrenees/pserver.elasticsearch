@@ -44,11 +44,7 @@ class ElasticSearchUtility(ElasticSearchManager):
 
     async def add_object(
             self, obj, site, loads, security=False, response=None):
-        global REINDEX_LOCK
-        while len(loads) > self.bulk_size * 2:
-            if response is not None:
-                response.write(b'Buffer too big waiting\n')
-            await asyncio.sleep(1)
+
         serialization = None
         if response is not None and hasattr(obj, 'id'):
             response.write(
@@ -63,66 +59,43 @@ class ElasticSearchUtility(ElasticSearchManager):
         except TypeError:
             pass
 
-        if len(loads) >= self.bulk_size and REINDEX_LOCK is False:
-            REINDEX_LOCK = True
+        if len(loads) >= self.bulk_size:
             if response is not None:
                 response.write(b'Going to reindex\n')
-            to_index = loads.copy()
             await self.reindex_bunk(
-                site, to_index, update=security, response=response)
+                site, loads, update=security, response=response)
             if response is not None:
-                response.write(b'Indexed %d\n' % len(to_index))
-            for key in to_index.keys():
-                del loads[key]
-            to_index = None
+                response.write(b'Indexed %d\n' % len(loads))
+            loads.clear()
             num, _, _ = gc.get_count()
             gc.collect()
             if response is not None:
                 response.write(b'GC cleaned %d\n' % num)
                 response.write(b'Memory usage         : % 2.2f MB\n' % round(
                     resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024.0/1024.0,1))
-            REINDEX_LOCK = False
-
-    def walk_brothers(self, bucket, loop, executor):
-        for item in bucket.values():
-            yield item
 
     async def reindex_recursive(
-            self, obj, site, loads, security=False, loop=None,
-            executor=None, response=None):
+            self, obj, site, loads, security=False, response=None):
 
-        obj = site._p_jar.get(obj)
-        if not hasattr(obj, '_Folder__data'):
-            return
-        folder = obj._Folder__data
-        bucket = folder._firstbucket
-        if not bucket:
-            return
-        del obj
-        gc.collect()
-
-        while bucket:
-            for item in self.walk_brothers(bucket, loop, executor):
-                await self.add_object(
+        for item in obj.values():
+            await self.add_object(
+                obj=item,
+                site=site,
+                loads=loads,
+                security=security,
+                response=response)
+            await asyncio.sleep(0)
+            if IContainer.providedBy(item) and len(item):
+                await self.reindex_recursive(
                     obj=item,
                     site=site,
                     loads=loads,
                     security=security,
                     response=response)
-                await asyncio.sleep(0)
-                if IContainer.providedBy(item) and len(item):
-                    await self.reindex_recursive(
-                        obj=item._p_oid,
-                        site=site,
-                        loads=loads,
-                        security=security,
-                        loop=loop,
-                        executor=executor,
-                        response=response)
-            bucket = bucket._next
+        del obj
         
     async def reindex_all_content(
-            self, obj, security=False, loop=None, response=None, clean=True):
+            self, obj, security=False, response=None, clean=True):
         """ We can reindex content or security for an object or
         a specific query
         """
@@ -130,10 +103,7 @@ class ElasticSearchUtility(ElasticSearchManager):
             await self.unindex_all_childs(obj, response=None, future=False)
         # count_objects = await self.count_operation(obj)
         loads = {}
-        if loop is None:
-            loop = asyncio.get_event_loop()
         request = get_current_request()
-        executor = getUtility(IApplication, name='root').executor
         site = request.site
         await self.add_object(
             obj=obj,
@@ -142,12 +112,10 @@ class ElasticSearchUtility(ElasticSearchManager):
             security=security,
             response=response)
         await self.reindex_recursive(
-            obj=obj._p_oid,
+            obj=obj,
             site=site,
             loads=loads,
             security=security,
-            loop=loop,
-            executor=executor,
             response=response)
         if len(loads):
             await self.reindex_bunk(site, loads, security, response=response)
