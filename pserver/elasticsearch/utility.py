@@ -93,7 +93,8 @@ class ElasticSearchUtility(ElasticSearchManager):
                     security=security,
                     response=response)
 
-        site._p_jar._cache.invalidate(obj._p_oid)
+        obj._p_deactivate()
+        site._p_jar.cacheGC()
         del obj
         
     async def reindex_all_content(
