@@ -14,6 +14,7 @@ from pserver.elasticsearch.events import SearchDoneEvent
 from pserver.elasticsearch.manager import ElasticSearchManager
 from zope.component import getUtility
 from zope.security.interfaces import IInteraction
+from plone.server.transactions import abort
 
 import aiohttp
 import asyncio
@@ -28,8 +29,9 @@ import resource
 logger = logging.getLogger('pserver.elasticsearch')
 
 MAX_RETRIES_ON_REINDEX = 5
-REINDEX_LOCK = False
-MAX_MEMORY = 1000
+MAX_MEMORY = 0.9
+
+PENDING = []
 
 
 class ElasticSearchUtility(ElasticSearchManager):
@@ -69,14 +71,16 @@ class ElasticSearchUtility(ElasticSearchManager):
             loads.clear()
             num, _, _ = gc.get_count()
             gc.collect()
+            total_memory = round(
+                resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024.0/1024.0,1)
             if response is not None:
                 response.write(b'GC cleaned %d\n' % num)
-                response.write(b'Memory usage         : % 2.2f MB\n' % round(
-                    resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024.0/1024.0,1))
+                response.write(b'Memory usage         : % 2.2f MB\n' % total_memory)
 
-    async def reindex_recursive(
+    async def index_sub_elements(
             self, obj, site, loads, security=False, response=None):
 
+        local_count = 0
         for item in obj.values():
             await self.add_object(
                 obj=item,
@@ -85,18 +89,18 @@ class ElasticSearchUtility(ElasticSearchManager):
                 security=security,
                 response=response)
             await asyncio.sleep(0)
+            local_count += 1
             if IContainer.providedBy(item) and len(item):
-                await self.reindex_recursive(
-                    obj=item,
-                    site=site,
-                    loads=loads,
-                    security=security,
-                    response=response)
+                PENDING.append(item._p_oid)
+
+            item._p_deactivate()
+            del item
+            if local_count % 100 == 0:
+                site._p_jar.cacheGC()
 
         obj._p_deactivate()
-        site._p_jar.cacheGC()
         del obj
-        
+
     async def reindex_all_content(
             self, obj, security=False, response=None, clean=True):
         """ We can reindex content or security for an object or
@@ -106,20 +110,43 @@ class ElasticSearchUtility(ElasticSearchManager):
             await self.unindex_all_childs(obj, response=None, future=False)
         # count_objects = await self.count_operation(obj)
         loads = {}
+        total_elements = 1
         request = get_current_request()
+        request._db_write_enabled = False
         site = request.site
+
+        PENDING.clear()
+
         await self.add_object(
             obj=obj,
             site=site,
             loads=loads,
             security=security,
             response=response)
-        await self.reindex_recursive(
+
+        await self.index_sub_elements(
             obj=obj,
             site=site,
             loads=loads,
             security=security,
             response=response)
+
+        while len(PENDING) > 0:
+            obj_id = PENDING.pop()
+            total_elements += 1
+            obj = site._p_jar.get(obj_id)
+            await self.index_sub_elements(
+                obj=obj,
+                site=site,
+                loads=loads,
+                security=security,
+                response=response)
+
+            if total_elements > 50:
+                response.write(b'Size pending %d', PENDING.__sizeof__())
+                await abort(request._txn, request)
+                request.conn.transaction_manager.begin(request)
+
         if len(loads):
             await self.reindex_bunk(site, loads, security, response=response)
 
@@ -450,17 +477,19 @@ class ElasticSearchUtility(ElasticSearchManager):
                     }
                 }, data])
                 idents.append(ident)
-                if len(bulk_data) % (self.bulk_size * 2) == 0:
+                if len(idents) >= self.bulk_size:
                     result = await self.bulk_insert(
                         real_index_name, bulk_data, idents, response=response)
-                    idents = []
-                    bulk_data = []
+                    idents.clear()
+                    bulk_data.clear()
 
-            if len(bulk_data) > 0:
+            if len(idents) > 0:
                 result = await self.bulk_insert(
                     real_index_name, bulk_data, idents, response=response)
             if 'errors' in result and result['errors']:
                 logger.error(json.dumps(result))
+            del idents
+            del bulk_data
             return result
 
     async def update(self, site, datas):
