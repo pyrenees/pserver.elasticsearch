@@ -143,7 +143,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 response=response)
 
             if total_elements > 50:
-                response.write(b'Size pending %d', PENDING.__sizeof__())
+                response.write(b'Size pending %d' % PENDING.__sizeof__())
                 await abort(request._txn, request)
                 request.conn.transaction_manager.begin(request)
 
