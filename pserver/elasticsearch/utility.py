@@ -353,7 +353,6 @@ class ElasticSearchUtility(ElasticSearchManager):
 
     async def call_unindex_all_childs(self, index_name, path_query):
         conn_es = await self.conn.transport.get_connection()
-        print('DELETING ' + json.dumps(path_query))
         async with conn_es._session.post(
                     conn_es._base_url + index_name + '/_delete_by_query',
                     data=json.dumps(path_query)
@@ -387,14 +386,13 @@ class ElasticSearchUtility(ElasticSearchManager):
         }
         if path != '/':
             path_query['query']['bool']['must'].append({
-                'match':
+                'term':
                     {'path': path}
             })
         path_query['query']['bool']['must'].append({
             'range':
                 {'depth': {'gte': depth}}
         })
-
         logger.warn('Going to delete all in %s %d' % (path, depth))
         if future:
             _id = 'unindex_all_childs-' + uuid.uuid4().hex
