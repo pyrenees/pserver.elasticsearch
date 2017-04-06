@@ -133,14 +133,20 @@ class ElasticSearchUtility(ElasticSearchManager):
 
         while len(PENDING) > 0:
             obj_id = PENDING.pop()
-            total_elements += 1
-            obj = site._p_jar.get(obj_id)
-            await self.index_sub_elements(
-                obj=obj,
-                site=site,
-                loads=loads,
-                security=security,
-                response=response)
+
+            try:
+                obj = site._p_jar.get(obj_id)
+            except:
+                obj = None
+
+            if obj is not None:
+                total_elements += 1
+                await self.index_sub_elements(
+                    obj=obj,
+                    site=site,
+                    loads=loads,
+                    security=security,
+                    response=response)
 
             if total_elements > 50:
                 response.write(b'Size pending %d' % PENDING.__sizeof__())
