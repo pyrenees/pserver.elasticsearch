@@ -394,6 +394,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 {'depth': {'gte': depth}}
         })
 
+        logger.warn('Going to delete all in %s %d' % (path, depth))
         if future:
             _id = 'unindex_all_childs-' + uuid.uuid4().hex
             request._futures.update({_id: self.call_unindex_all_childs(index_name, path_query)})
