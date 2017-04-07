@@ -152,6 +152,7 @@ class ElasticSearchUtility(ElasticSearchManager):
                 response.write(b'Size pending %d' % PENDING.__sizeof__())
                 await abort(request._txn, request)
                 request.conn.transaction_manager.begin(request)
+                total_elements = 1
 
         if len(loads):
             await self.reindex_bunk(site, loads, security, response=response)
@@ -218,7 +219,6 @@ class ElasticSearchUtility(ElasticSearchManager):
         # query.update(permission_query)
         q['body'] = query
         q['size'] = size
-        logger.warn(q)
         return q
 
     async def add_security_query(self, query, request=None):
