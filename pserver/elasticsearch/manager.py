@@ -194,10 +194,10 @@ class ElasticSearchManager(DefaultSearchUtility):
         temp_index = index_name + '_' + str(next_version) + '_t'
 
         # Create and setup the new index
-        exists = await self.conn.indices.exists(index_name)
-        if exists:
-            logger.warn('Canonical index exist')
-            await self.conn.indices.delete(index_name)
+        # exists = await self.conn.indices.exists(index_name)
+        # if exists:
+        #     logger.warn('Canonical index exist')
+        #     await self.conn.indices.delete(index_name)
 
         # Create and setup the new index
         exists = await self.conn.indices.exists(real_index_name_next_version)
