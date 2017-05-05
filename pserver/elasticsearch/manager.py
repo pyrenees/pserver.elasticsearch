@@ -182,7 +182,7 @@ class ElasticSearchManager(DefaultSearchUtility):
         index_name = self.get_index_name(site)
         self.conn.indices.stats(index_name)
 
-    async def migrate_index(self, site):
+    async def migrate_index(self, site, sndstep=False):
         index_name = self.get_index_name(site)
         version = self.get_version(site)
         mappings = get_mappings()
@@ -200,103 +200,104 @@ class ElasticSearchManager(DefaultSearchUtility):
         #     await self.conn.indices.delete(index_name)
 
         # Create and setup the new index
-        exists = await self.conn.indices.exists(real_index_name_next_version)
-        if exists:
-            logger.warn('New version exist')
-            await self.conn.indices.delete(real_index_name_next_version)
+        if sndstep is False:
+            exists = await self.conn.indices.exists(real_index_name_next_version)
+            if exists:
+                logger.warn('New version exist')
+                await self.conn.indices.delete(real_index_name_next_version)
 
-        exists = await self.conn.indices.exists(temp_index)
-        conn_es = await self.conn.transport.get_connection()
+            exists = await self.conn.indices.exists(temp_index)
+            conn_es = await self.conn.transport.get_connection()
 
-        if exists:
-            # There is a temp index so it needs to be reindex to the old one
-            # Its been a failing reindexing
-            logger.warn('Temp index exist')
-            # Move aliases
+            if exists:
+                # There is a temp index so it needs to be reindex to the old one
+                # Its been a failing reindexing
+                logger.warn('Temp index exist')
+                # Move aliases
+                body = {
+                    "actions": [
+                        {"remove": {
+                            "alias": index_name,
+                            "index": temp_index
+                        }},
+                        {"add": {
+                            "alias": index_name,
+                            "index": real_index_name
+                        }}
+                    ]
+                }
+                conn_es = await self.conn.transport.get_connection()
+                async with conn_es._session.post(
+                            conn_es._base_url + '_aliases',
+                            data=json.dumps(body),
+                            timeout=1000000
+                        ) as resp:
+                    pass
+                body = {
+                  "source": {
+                    "index": temp_index
+                  },
+                  "dest": {
+                    "index": real_index_name
+                  }
+                }
+                async with conn_es._session.post(
+                            conn_es._base_url + '_reindex',
+                            data=json.dumps(body)
+                        ) as resp:
+                    pass
+                await self.conn.indices.delete(temp_index)
+
+            await self.conn.indices.create(temp_index)
+            await self.conn.indices.create(real_index_name_next_version)
+            await self.conn.indices.close(real_index_name_next_version)
+            await self.conn.indices.put_settings(
+                index_settings, real_index_name_next_version)
+            for key, value in mappings.items():
+                await self.conn.indices.put_mapping(
+                    real_index_name_next_version, key, value)
+            await self.conn.indices.open(real_index_name_next_version)
+
+            # Start to duplicate aliases
             body = {
                 "actions": [
                     {"remove": {
                         "alias": index_name,
-                        "index": temp_index
+                        "index": real_index_name
                     }},
                     {"add": {
                         "alias": index_name,
-                        "index": real_index_name
+                        "index": temp_index
                     }}
                 ]
             }
-            conn_es = await self.conn.transport.get_connection()
+            
             async with conn_es._session.post(
                         conn_es._base_url + '_aliases',
                         data=json.dumps(body),
                         timeout=1000000
                     ) as resp:
                 pass
+            logger.warn('Updated aliases')
+
+            # Reindex
             body = {
               "source": {
-                "index": temp_index
+                "index": real_index_name
               },
               "dest": {
-                "index": real_index_name
+                "index": real_index_name_next_version
               }
             }
+            conn_es = await self.conn.transport.get_connection()
             async with conn_es._session.post(
                         conn_es._base_url + '_reindex',
-                        data=json.dumps(body)
+                        data=json.dumps(body),
+                        timeout=10000000
                     ) as resp:
                 pass
-            await self.conn.indices.delete(temp_index)
-
-        await self.conn.indices.create(temp_index)
-        await self.conn.indices.create(real_index_name_next_version)
-        await self.conn.indices.close(real_index_name_next_version)
-        await self.conn.indices.put_settings(
-            index_settings, real_index_name_next_version)
-        for key, value in mappings.items():
-            await self.conn.indices.put_mapping(
-                real_index_name_next_version, key, value)
-        await self.conn.indices.open(real_index_name_next_version)
-
-        # Start to duplicate aliases
-        body = {
-            "actions": [
-                {"remove": {
-                    "alias": index_name,
-                    "index": real_index_name
-                }},
-                {"add": {
-                    "alias": index_name,
-                    "index": temp_index
-                }}
-            ]
-        }
-        
-        async with conn_es._session.post(
-                    conn_es._base_url + '_aliases',
-                    data=json.dumps(body),
-                    timeout=1000000
-                ) as resp:
-            pass
-        logger.warn('Updated aliases')
-
-        # Reindex
-        body = {
-          "source": {
-            "index": real_index_name
-          },
-          "dest": {
-            "index": real_index_name_next_version
-          }
-        }
-        conn_es = await self.conn.transport.get_connection()
-        async with conn_es._session.post(
-                    conn_es._base_url + '_reindex',
-                    data=json.dumps(body),
-                    timeout=10000000
-                ) as resp:
-            pass
-        logger.warn('Reindexed')
-        
+            logger.warn('Reindexed')
+            
         # Move aliases
         body = {
             "actions": [
